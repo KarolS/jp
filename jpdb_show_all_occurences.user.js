@@ -3,9 +3,24 @@
 // @description  Shows all occurences of words in your decks on the vocabulary page
 // @namespace    http://karols.github.io
 // @author       vytah
-// @version      2025-03-07
+// @version      2025-12-01
 // @match        https://jpdb.io/settings
 // @match        https://jpdb.io/vocabulary/*
+// @match        https://jpdb.io/kanji/*
+// @match        https://jpdb.io/search?*
+// @match        https://jpdb.io/deck?*
+// @match        https://jpdb.io/textbook/*
+// @match        https://jpdb.io/novel/*
+// @match        https://jpdb.io/visual-novel/*
+// @match        https://jpdb.io/anime/*
+// @match        https://jpdb.io/aozora/*
+// @match        https://jpdb.io/non-fiction/*
+// @match        https://jpdb.io/youtube-video/*
+// @match        https://jpdb.io/video-game/*
+// @match        https://jpdb.io/live-action/*
+// @match        https://jpdb.io/web-novel/*
+// @match        https://jpdb.io/audio/*
+// @match        https://jpdb.io/vocabulary-list/*
 // @grant        GM_xmlhttpRequest
 // @connect      jpdb.io
 // ==/UserScript==
@@ -33,6 +48,14 @@ await (async function() {
     const NEEDS_ESCAPING = /[<>&"']/;
     const escapeHtml = (str) => {
         return !(NEEDS_ESCAPING.test(str)) ? str : str.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+    }
+    const fortify = (text) => {
+        if (text.length > 7) {
+            let parts = text.split('/');
+            if (parts.length > 1) return parts.map(fortify).join('/');
+            return text;
+        }
+        return [...text].join('\u200d');
     }
     const time = (f, name) => {
         let start = Date.now();
@@ -123,23 +146,51 @@ await (async function() {
         })
     }
     function trimDecks_format1(data, currentVid) {
-        let currentVidText = currentVid.toString(36);
+        let currentVidText;
+        let vidMap = new Map();
+        if (typeof currentVid === 'number') {
+            currentVidText = currentVid.toString(36);
+            vidMap.set(currentVid, currentVidText);
+        } else {
+            currentVidText = new Set();
+            for (let vid of currentVid) {
+                currentVidText.add(vid.toString(36));
+                vidMap.set(vid, vid.toString(36));
+            }
+        }
+        console.log(currentVidText);
         let trimmedDecks = [];
         for (let deck of data.decks) {
             let trimmedVocabulary = [];
-            for (let word of deck.vocabulary) {
-                let wid = typeof word === "number" ? word : word[0];
-                if (currentVidText === data.words[wid * 2]){
-                    trimmedVocabulary.push({
-                        spelling: data.words[wid * 2 + 1],
-                        occurences: typeof word === "number" ? 1 : word[1]
-                    })
+            if (typeof currentVidText === 'string') {
+                for (let word of deck.vocabulary) {
+                    let wid = typeof word === "number" ? word : word[0];
+                    if (currentVidText === data.words[wid * 2]){
+                        trimmedVocabulary.push({
+                            vid: currentVidText,
+                            spelling: data.words[wid * 2 + 1],
+                            occurences: typeof word === "number" ? 1 : word[1]
+                        })
+                    }
+                }
+            } else {
+                for (let word of deck.vocabulary) {
+                    let wid = typeof word === "number" ? word : word[0];
+                    let vid = data.words[wid * 2]
+                    if (currentVidText.has(vid)){
+                        trimmedVocabulary.push({
+                            vid: vid,
+                            spelling: data.words[wid * 2 + 1],
+                            occurences: typeof word === "number" ? 1 : word[1]
+                        })
+                    }
                 }
             }
             trimmedDecks.push({
                 name: deck.name,
                 id: deck.id,
-                trimmedVocabulary: trimmedVocabulary
+                trimmedVocabulary: trimmedVocabulary,
+                vidMap: vidMap
             });
         }
         return trimmedDecks;
@@ -156,6 +207,129 @@ await (async function() {
         return [DATA_FORMAT_1_UUID].includes(data?.format);
     }
 
+    function getTrimmedDecks(currentVid) {
+        let data = time(()=>{
+            let stored = localStorage.getItem('vv_decks');
+            return stored ? JSON.parse(stored) : stored;
+        }, "parse");
+        if (!data) {
+            console.error("Visit https://jpdb.io/settings to fetch decks")
+            return;
+        }
+        if (!hasSupportedFormat(data)) {
+            console.error("Invalid cached decks format. Visit https://jpdb.io/settings to fetch decks again")
+            return;
+        }
+        return time(() => trimDecks_formatAuto(data, currentVid), "trim decks");
+    }
+
+    function getSettings() {
+        let settings = {};
+        try {
+            let stored = localStorage.getItem('vv_config');
+            if (stored) {
+                settings = JSON.parse(stored);
+                if (typeof settings !== 'object') {
+                    console.error("Damaged config!");
+                    settings = {};
+                }
+            }
+        } catch (e) {
+            console.error("Damaged config!");
+        }
+        settings.displayOnDeckPage ??= true;
+        settings.displayOnVocabularyPage ??= true;
+        settings.displayOnVocabularyUsedInPage ??= false;
+        settings.displayInUsedInLists ??= true;
+        settings.targetDecks ??= 'all';
+        return settings;
+    }
+    function setSettings(settings) {
+        console.log('saving');
+        localStorage.setItem('vv_config', JSON.stringify(settings));
+        console.log('saved');
+    }
+    function isInvalidDeck(settings, deck) {
+        let s = settings.targetDecks;
+        if (s === 'all') return false;
+        if (Array.isArray(s)) return !s.includes(deck.id);
+        console.log('Invalid targetDecks setting: ' + s);
+        return false;
+    }
+    function getTooltipForCounts(item, c) {
+        if (c.otherSpellings.size <= 0) {
+            if (c.totalThisSpelling <= 0) {
+                return `${fortify(item.spelling)} never occurs in the decks`
+            }
+            return `
+${fortify(item.spelling)} occurs\u00a0${c.totalThisSpelling}×
+and is the only spelling`;
+        } else {
+            return `
+${fortify(item.spelling)} occurs\u00a0${c.totalThisSpelling}×
+${fortify([...c.otherSpellings].join('/')) }\u00a0occur${c.otherSpellings.size===1?'s':''}\u00a0${c.totalAllSpellings-c.totalThisSpelling}×`;
+        }
+    }
+    function getAllRelevantVidsInDocument(currentVid){
+        let relevantVids;
+        if (currentVid instanceof Set) {
+            relevantVids = new Set(currentVid);
+        } else {
+            relevantVids = new Set();
+        }
+        if (typeof currentVid === 'string') {
+            relevantVids.add(currentVid);
+        }
+        for(const link of document.querySelectorAll("a")) {
+            if (!link.href) continue;
+            let vid = getVidFromUrl(link.href);
+            if (!vid) continue;
+            relevantVids.add(vid);
+        }
+        return relevantVids;
+    }
+
+
+    const URL_REGEX = /^https:\/\/[\w.]+\/vocabulary\/(\d+)\/([^#\/]+)\/?(?:#.*)?/;
+    function getVidAndSpellingFromUrl(href) {
+        let urlTokens = href.match(URL_REGEX);
+        if (!urlTokens) return undefined;
+        let vid = +urlTokens[1];
+        let spelling = decodeURI(urlTokens[2]);
+        return {vid, spelling};
+    }
+    function getVidFromUrl(href) {
+        let urlTokens = href.match(URL_REGEX);
+        if (!urlTokens) return undefined;
+        return +urlTokens[1];
+    }
+    function getWordCounts(item, decks, settings) {
+        let otherSpellings = new Set();
+        let totalAllSpellings = 0;
+        let totalThisSpelling = 0;
+        for (let deck of decks) {
+            if (isInvalidDeck(settings, deck)) continue;
+            if (deck.trimmedVocabulary.length === 0) continue;
+            let mappedVid = deck.vidMap ? deck.vidMap.get(item.vid) : item.vid;
+            if (mappedVid === undefined) continue;
+            let thisDeckAllSpellings = 0;
+            let thisDeckThisSpelling = 0;
+            for (let word of deck.trimmedVocabulary) {
+                if (word.vid === mappedVid) {
+                    thisDeckAllSpellings += word.occurences;
+                    if (word.spelling === item.spelling) {
+                        thisDeckThisSpelling += word.occurences;
+                    } else {
+                        otherSpellings.add(word.spelling);
+                    }
+                }
+            }
+            totalAllSpellings += thisDeckAllSpellings;
+            totalThisSpelling += thisDeckThisSpelling;
+        }
+        return {totalAllSpellings, totalThisSpelling, otherSpellings};
+    }
+
     if (document.URL === "https://jpdb.io/settings") {
         let apiKey = findApiKey();
         console.log(apiKey);
@@ -164,7 +338,7 @@ await (async function() {
             let stored = localStorage.getItem('vv_decks');
             if (stored) {
                 data = JSON.parse(stored);
-                if (data?.format !== DATA_FORMAT_1_UUID) {
+                if (!hasSupportedFormat(data)) {
                     console.error("Incompatible deck format in cache: " + data?.format);
                     data = undefined;
                 }
@@ -176,7 +350,7 @@ await (async function() {
             let progress = document.getElementById("vv_fetch_progress");
             progress.innerHTML = `Fetching decks`;
             let decks = await fetchAllDecks(apiKey);
-            console.log(decks);
+            //console.log(decks);
             let wordSet = new Set();
             let ix = 1;
             for (let deck of decks) {
@@ -195,26 +369,94 @@ await (async function() {
             localStorage.setItem('vv_decks', JSON.stringify(deckData));
             progress.innerHTML = "Last time fetched: " + deckData.lastFetched;
         }
+        const applySettings = (settings) => {
+            document.getElementById('vv-displayOnDeckPage').checked = settings.displayOnDeckPage;
+            document.getElementById('vv-displayOnVocabularyPage').checked = settings.displayOnVocabularyPage;
+            document.getElementById('vv-displayOnVocabularyUsedInPage').checked = settings.displayOnVocabularyUsedInPage;
+            document.getElementById('vv-displayInUsedInLists').checked = settings.displayInUsedInLists;
+            document.getElementById('vv-targetDecks').value =
+                typeof settings.targetDecks === "string" ? settings.targetDecks :
+                Array.isArray(settings.targetDecks) ? settings.targetDecks.join(',') :
+                "all";
+
+        }
+        document.vv_saveSettings = () => {
+            let targetDecks = (document.getElementById('vv-targetDecks').value ?? '').trim();
+            if (targetDecks !== 'all') {
+                try {
+                    let array = targetDecks.split(/[,;]/).map(it=>+it.trim());
+                    console.log(array);
+                    let nan = array.find(it=>it!==it);
+                    if (nan === undefined) {
+                        targetDecks = array;
+                    } else {
+                        console.error('Invalid targetDecks value: ' + targetDecks);
+                        targetDecks = 'all';
+                    }
+                } catch (e) {
+                    console.error('Invalid targetDecks value: ' + targetDecks);
+                    targetDecks = 'all';
+                }
+            }
+            let settings = {
+                targetDecks: targetDecks,
+                displayOnDeckPage: document.getElementById('vv-displayOnDeckPage').checked,
+                displayOnVocabularyPage: document.getElementById('vv-displayOnVocabularyPage').checked,
+                displayOnVocabularyUsedInPage: document.getElementById('vv-displayOnVocabularyUsedInPage').checked,
+                displayInUsedInLists: document.getElementById('vv-displayInUsedInLists').checked,
+            };
+            console.log(settings);
+            setSettings(settings);
+            applySettings(settings)
+        }
+        let settings = getSettings();
         try {
             let header = document.getElementsByTagName("H4")[0];
             let last_date = data?.lastFetched;
-            if (last_date) last_date = "Last time fetched: " + last_date; else last_date = "No decks in cache";
+            if (last_date) last_date = "Last time fetched: " + last_date; else last_date = "No decks in cache. You need to fetch them before using the script.";
             console.log(last_date);
+            function checkbox(id, text) {
+                return `
+<div class="checkbox">
+<input type="checkbox" class="vv-saves-settings" id="vv-${id}" name="vv-${id}" checked="${settings[id]} ? 'checked' : ''}">
+<label for="vv-${id}">${text}</label>
+</div>`
+            }
             header.outerHTML += `
 <form>
-<h6 style="margin-top: 0;">Show all occurences on vocabulary pages</h6>
+<h6 style="margin-top: 0;">Settings for ‟Show all occurences” script</h6>
 <div><div class="subsection-header">
 <span id="vv_fetch_progress">${last_date}</span>
 <br>
 <input type="button" onclick="document.vv_fetchAllDecks()" class="outline" style="font-weight: bold;" value="Fetch decks into cache">
 </div></div>
+${checkbox('displayOnDeckPage', 'Display occurences in deck vocabulary list')}
+${checkbox('displayInUsedInLists', 'Display occurences in "Used in vocabulary" and "Composed of" lists')}
+${checkbox('displayOnVocabularyPage', 'Display detailed occurences on vocabulary details page')}
+${checkbox('displayOnVocabularyUsedInPage', 'Display detailed occurences on vocabulary "Used in" page')}
+<div class="form-box-parent"><div class="form-box"><div>
+<label for="vv-targetDecks">Deck ids for counting occurences (or <i>all</i> for all):</label>
+<input style="max-width: 32rem;" type="text" id="vv-targetDecks" name="vv-targetDecks" value="">
+</div></div></div>
+<div><div class="subsection-header">
+<br>
+<input type="button" onclick="document.vv_saveSettings()" class="outline" style="font-weight: bold;" value="Save settings for ‟Show all occurences” script">
+</div></div>
 </form>
             `;
+            applySettings(settings);
         } catch (e) {
             console.error("Failed to inject UI. You can fetch decks manually by executing in the console:\ndocument.vv_fetchAllDecks()");
         }
     }
-    if (document.URL.startsWith('https://jpdb.io/vocabulary/')) {
+
+    if (document.URL.startsWith('https://jpdb.io/vocabulary/') || document.URL.startsWith('https://jpdb.io/search?')) {
+        let settings = getSettings();
+        if (document.URL.includes("/used-in")) {
+            if (!settings.displayOnVocabularyUsedInPage) return;
+        } else {
+            if (!settings.displayOnVocabularyPage) return;
+        }
         let currentVid = +document.URL.split('/')[4];
         if (!Number.isInteger(currentVid) || currentVid < 0) {
             console.log("Invalid word ID in URL")
@@ -234,19 +476,14 @@ await (async function() {
             console.log("No target div found")
             return;
         }
-        let data = time(()=>{
-            let stored = localStorage.getItem('vv_decks');
-            return stored ? JSON.parse(stored) : stored;
-        }, "parse");
-        if (!data) {
-            console.error("Visit https://jpdb.io/settings to fetch decks")
-            return;
+        let relevantVids;
+        if (settings.displayInUsedInLists) {
+            relevantVids = getAllRelevantVidsInDocument(currentVid);
+        } else {
+            relevantVids = currentVid;
         }
-        if (!hasSupportedFormat(data)) {
-            console.error("Invalid cached decks format. Visit https://jpdb.io/settings to fetch decks again")
-            return;
-        }
-        let decks = time(() => trimDecks_formatAuto(data, currentVid), "trim decks");
+        let decks = getTrimmedDecks(relevantVids);
+        if (!decks) return;
         let spellingsList = time(() => {
             let spellings = new Map();
             for (let deck of decks) {
@@ -258,13 +495,14 @@ await (async function() {
         }, "build spellings map");
         if (spellingsList.length === 0) {
             console.log("Word not in any deck");
-            return;
+            if (!settings.displayInUsedInLists) return;
         }
         spellingsList.sort((a,b) => b[1] - a[1]);
         const nudgeFactor = (i) => i < 0 ? 1e8 : 1e8 + (spellingsList.length - i);
         let rows = [];
         time(() =>{
             for (let deck of decks) {
+                if (isInvalidDeck(settings, deck)) continue;
                 if (deck.trimmedVocabulary.length === 0) continue;
                 let cells = Array(spellingsList.length);
                 cells.fill({html: `<td style="padding:0;border:none;padding-left:1em;text-align:right"></td>`});
@@ -318,6 +556,92 @@ ${cells.map(it=>it.html).join('')}
         }
 
 
+        const usedInExamples = document.querySelectorAll("div.subsection-used-in div.used-in");
+        if (settings.displayInUsedInLists && usedInExamples) {
+            for (let usedInExample of usedInExamples) {
+                const usedInLink = usedInExample.querySelector("a");
+                if (!usedInLink) continue;
+                let vs = getVidAndSpellingFromUrl(usedInLink.href);
+                if (!vs) continue;
+                let c = getWordCounts(vs, decks, settings);
+                if (!c) continue;
+                let tooltip = getTooltipForCounts(vs, c);
+                usedInExample.innerHTML += `
+                    <div class="tag tooltip" style="text-align:left !important;padding:0;${c.totalAllSpellings ? '' : 'opacity:0.5'}" data-tooltip="${tooltip}"><span>
+                    In all decks: ${c.totalThisSpelling}${c.totalAllSpellings !== c.totalThisSpelling ? `&nbsp;<span style="opacity:0.5">(${c.totalAllSpellings})</span>` : ''}
+                    </span></div>`;
+            }
+        }
+        const composedOfExamples = document.querySelectorAll("div.composed-of");
+        if (settings.displayInUsedInLists && composedOfExamples) {
+            for (let composedOfExample of composedOfExamples) {
+                const composedOfLink = composedOfExample.querySelector("a");
+                if (!composedOfLink) continue;
+                let vs = getVidAndSpellingFromUrl(composedOfLink.href);
+                if (!vs) continue;
+                let c = getWordCounts(vs, decks, settings);
+                if (!c) continue;
+                const targetDiv = composedOfExample.querySelector("div.description");
+                if (!targetDiv) continue;
+                let tooltip = getTooltipForCounts(vs, c);
+                targetDiv.innerHTML += `
+                    <br><div class="tag tooltip" style="text-align:left !important;padding:0;${c.totalAllSpellings ? '' : 'opacity:0.5'}" data-tooltip="${tooltip}"><span>
+                    In all decks: ${c.totalThisSpelling}${c.totalAllSpellings !== c.totalThisSpelling ? `&nbsp;<span style="opacity:0.5">(${c.totalAllSpellings})</span>` : ''}
+                    </span></div>`;
+            }
+        }
+    }
+
+    if (document.URL.startsWith('https://jpdb.io/kanji/')) {
+        let settings = getSettings();
+        if (!settings.displayInUsedInLists) return;
+        let relevantVids = getAllRelevantVidsInDocument();
+        let decks = getTrimmedDecks(relevantVids);
+        const usedInExamples = document.querySelectorAll("div.subsection-used-in div.used-in");
+        if (usedInExamples) {
+            for (let usedInExample of usedInExamples) {
+                const usedInLink = usedInExample.querySelector("a");
+                if (!usedInLink) continue;
+                let vs = getVidAndSpellingFromUrl(usedInLink.href);
+                if (!vs) continue;
+                let c = getWordCounts(vs, decks, settings);
+                if (!c) continue;
+                let tooltip = getTooltipForCounts(vs, c);
+                usedInExample.innerHTML += `
+                    <div class="tag tooltip" style="text-align:left !important;padding:0;${c.totalAllSpellings ? '' : 'opacity:0.5'}" data-tooltip="${tooltip}"><span>
+                    In all decks: ${c.totalThisSpelling}${c.totalAllSpellings !== c.totalThisSpelling ? `&nbsp;<span style="opacity:0.5">(${c.totalAllSpellings})</span>` : ''}
+                    </span></div>`;
+            }
+        }
+    }
+
+    if (document.URL.startsWith('https://jpdb.io/deck?') || document.URL.includes('/vocabulary-list')) {
+        let settings = getSettings();
+        if (!settings.displayOnDeckPage) return;
+        let itemsDivs = document.getElementsByClassName("entry");
+        let vids = new Set();
+        let items = [];
+        for (let itemDiv of itemsDivs) {
+            let vs = getVidAndSpellingFromUrl(itemDiv.getElementsByTagName("a")[0].href);
+            if (!vs) continue;
+            vids.add(vs.vid);
+            items.push({...vs, div: itemDiv});
+        }
+        let decks = getTrimmedDecks(vids);
+        if (!decks) return;
+        for (let item of items) {
+            let c = getWordCounts(item, decks, settings);
+            let tooltip = getTooltipForCounts(item, c);
+            let tagDiv = item.div.getElementsByClassName("tags")[0]
+            if (tagDiv) {
+                tagDiv.innerHTML = `
+                <div class="tag tooltip" style="${c.totalAllSpellings ? '' : 'opacity:0.5'}" data-tooltip="${tooltip}"><span>
+                In all decks: ${c.totalThisSpelling}${c.totalAllSpellings !== c.totalThisSpelling ? `&nbsp;<span style="opacity:0.5">(${c.totalAllSpellings})</span>` : ''}
+                </span></div>` + tagDiv.innerHTML
+            } else {
+                console.log("No div with tags");
+            }
+        }
     }
 
 })();
