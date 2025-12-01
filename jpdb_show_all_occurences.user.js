@@ -3,7 +3,7 @@
 // @description  Shows all occurences of words in your decks on the vocabulary page
 // @namespace    http://karols.github.io
 // @author       vytah
-// @version      2025-12-01
+// @version      2025-12-01-a
 // @match        https://jpdb.io/settings
 // @match        https://jpdb.io/vocabulary/*
 // @match        https://jpdb.io/kanji/*
@@ -487,7 +487,9 @@ ${checkbox('displayOnVocabularyUsedInPage', 'Display detailed occurences on voca
         let spellingsList = time(() => {
             let spellings = new Map();
             for (let deck of decks) {
+                let mappedVid = deck.vidMap ? deck.vidMap.get(currentVid) : currentVid;
                 for (let word of deck.trimmedVocabulary) {
+                    if (word.vid !== mappedVid) continue;
                     spellings.set(word.spelling, (spellings.get(word.spelling) ?? 0) + word.occurences);
                 }
             }
@@ -506,9 +508,11 @@ ${checkbox('displayOnVocabularyUsedInPage', 'Display detailed occurences on voca
                 if (deck.trimmedVocabulary.length === 0) continue;
                 let cells = Array(spellingsList.length);
                 cells.fill({html: `<td style="padding:0;border:none;padding-left:1em;text-align:right"></td>`});
+                let mappedVid = deck.vidMap ? deck.vidMap.get(currentVid) : currentVid;
                 let totalInThisDeck = 0;
                 let totalInThisDeckNudged = 0;
                 for (let word of deck.trimmedVocabulary) {
+                    if (word.vid !== mappedVid) continue;
                     let index = spellingsList.findIndex(it => it[0] === word.spelling);
                     totalInThisDeck += word.occurences;
                     totalInThisDeckNudged += word.occurences * nudgeFactor(index);
