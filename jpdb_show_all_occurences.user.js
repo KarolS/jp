@@ -3,7 +3,7 @@
 // @description  Shows all occurences of words in your decks on the vocabulary page
 // @namespace    http://karols.github.io
 // @author       vytah
-// @version      2025-04-14-a
+// @version      2026-04-29-a
 // @match        https://jpdb.io/settings
 // @match        https://jpdb.io/vocabulary/*
 // @match        https://jpdb.io/kanji/*
@@ -493,10 +493,19 @@ ${checkbox('displayOnVocabularyUsedInPage', 'Display detailed occurences on voca
         if (document.URL.includes("/used-in")) {
             siblingDiv = document.getElementsByClassName('vocabulary')[0];
         } else {
-            try {
-                siblingDiv = document.getElementsByClassName('view-conjugations-link')[0].parentElement;
-            } catch (e) {
-                siblingDiv = document.getElementsByClassName('subsection-pitch-accent')[0].parentElement.parentElement.parentElement;
+            let potentialSiblings = [
+                () => document.getElementsByClassName('view-conjugations-link')[0].parentElement,
+                () => document.getElementsByClassName('subsection-pitch-accent')[0].parentElement.parentElement.parentElement,
+                () => document.getElementsByClassName('subsection-composed-of-kanji')[0].parentElement.parentElement.parentElement,
+                () => document.getElementsByClassName('subsection-meanings')[0].parentElement.parentElement.parentElement,
+            ];
+            for (let ps of potentialSiblings) {
+                try {
+                    siblingDiv = ps();
+                    break;
+                } catch (e) {
+                    // ignore
+                }
             }
         }
         if (!siblingDiv) {
