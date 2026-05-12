@@ -3,7 +3,7 @@
 // @description  Shows all occurences of words in your decks on the vocabulary page
 // @namespace    http://karols.github.io
 // @author       vytah
-// @version      2026-04-29-a
+// @version      2026-05-12-a
 // @match        https://jpdb.io/settings
 // @match        https://jpdb.io/vocabulary/*
 // @match        https://jpdb.io/kanji/*
@@ -330,6 +330,25 @@ ${fortify([...c.otherSpellings].join('/')) }\u00a0occur${c.otherSpellings.size==
         return {totalAllSpellings, totalThisSpelling, otherSpellings};
     }
 
+    function handleUsedInSection(settings, decks, always) {
+        const usedInExamples = document.querySelectorAll("div.subsection-used-in div.used-in");
+        if ((always||settings.displayInUsedInLists) && usedInExamples) {
+            for (let usedInExample of usedInExamples) {
+                const usedInLink = usedInExample.querySelector("a");
+                if (!usedInLink) continue;
+                let vs = getVidAndSpellingFromUrl(usedInLink.href);
+                if (!vs) continue;
+                let c = getWordCounts(vs, decks, settings);
+                if (!c) continue;
+                let tooltip = getTooltipForCounts(vs, c);
+                usedInExample.innerHTML += `
+                    <div class="tag tooltip" style="text-align:left !important;padding:0;${c.totalAllSpellings ? '' : 'opacity:0.5'}" data-tooltip="${tooltip}"><span>
+                    In all decks: ${c.totalThisSpelling}${c.totalAllSpellings !== c.totalThisSpelling ? `&nbsp;<span style="opacity:0.5">(${c.totalAllSpellings})</span>` : ''}
+                    </span></div>`;
+            }
+        }
+    }
+
     if (document.URL === "https://jpdb.io/settings") {
         let apiKey = findApiKey();
         console.log(apiKey);
@@ -448,6 +467,14 @@ ${checkbox('displayOnVocabularyUsedInPage', 'Display detailed occurences on voca
         } catch (e) {
             console.error("Failed to inject UI. You can fetch decks manually by executing in the console:\ndocument.vv_fetchAllDecks()");
         }
+    }
+
+    if (document.URL.startsWith('https://jpdb.io/kanji/')) {
+        let settings = getSettings();
+        let relevantVids = getAllRelevantVidsInDocument(null);
+        let decks = getTrimmedDecks(relevantVids);
+        if (!decks) return;
+        handleUsedInSection(settings, decks, true);
     }
 
     if (document.URL.startsWith('https://jpdb.io/vocabulary/') || document.URL.startsWith('https://jpdb.io/search?')) {
@@ -597,23 +624,8 @@ ${cells.map(it=>it.html).join('')}
             console.log("Word not in any deck");
         }
 
+        handleUsedInSection(settings, decks, false);
 
-        const usedInExamples = document.querySelectorAll("div.subsection-used-in div.used-in");
-        if (settings.displayInUsedInLists && usedInExamples) {
-            for (let usedInExample of usedInExamples) {
-                const usedInLink = usedInExample.querySelector("a");
-                if (!usedInLink) continue;
-                let vs = getVidAndSpellingFromUrl(usedInLink.href);
-                if (!vs) continue;
-                let c = getWordCounts(vs, decks, settings);
-                if (!c) continue;
-                let tooltip = getTooltipForCounts(vs, c);
-                usedInExample.innerHTML += `
-                    <div class="tag tooltip" style="text-align:left !important;padding:0;${c.totalAllSpellings ? '' : 'opacity:0.5'}" data-tooltip="${tooltip}"><span>
-                    In all decks: ${c.totalThisSpelling}${c.totalAllSpellings !== c.totalThisSpelling ? `&nbsp;<span style="opacity:0.5">(${c.totalAllSpellings})</span>` : ''}
-                    </span></div>`;
-            }
-        }
         const composedOfExamples = document.querySelectorAll("div.composed-of");
         if (settings.displayInUsedInLists && composedOfExamples) {
             for (let composedOfExample of composedOfExamples) {
