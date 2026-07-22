@@ -4,7 +4,7 @@
 // @namespace    http://karols.github.io
 // @version      2026-07-22
 // @author       Koro/renjixd
-// @author       KarolSt
+// @author       vytah
 // @match        https://jpdb.io/learn
 // @match        https://jpdb.io/deck-list
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=jpdb.io
